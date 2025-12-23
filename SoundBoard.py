@@ -1,7 +1,7 @@
 import os
 import pygame
 import tkinter as tk
-from tkinter import filedialog, ttk, Listbox, Scrollbar, messagebox
+from tkinter import filedialog, ttk, Listbox, Scrollbar
 import threading
 import time
 import pymem
@@ -9,8 +9,6 @@ import pymem.process
 import json
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-
 
 class SoundAction(Enum):
     PLAY_CURRENT = "play_current"
@@ -21,7 +19,6 @@ class SoundAction(Enum):
 
 @dataclass
 class SoundItem:
-    """Represents a sound in the soundboard"""
     path: str
     name: str = ""
     
@@ -30,28 +27,27 @@ class SoundItem:
             self.name = os.path.splitext(os.path.basename(self.path))[0]
 
 class ConfigManager:
-    """Manages configuration file"""
     
-    def __init__(self, config_file="config.json"):
-        self.config_file = config_file
+    def __init__(self):
+        self.config_file = "settings.json"
         self.config = self.load_config()
     
+    def get_config_path(self):
+        return os.path.join(os.getcwd(), self.config_file)
+    
     def load_config(self):
-        """Load configuration from file"""
         default_config = {
             "last_folder": "",
             "volume": 70,
             "loop": False,
-            "window_position": None,
-            "current_index": 0,
-            "last_songs": []
+            "current_index": 0
         }
         
-        if os.path.exists(self.config_file):
+        config_path = self.get_config_path()
+        if os.path.exists(config_path):
             try:
-                with open(self.config_file, 'r') as f:
+                with open(config_path, 'r') as f:
                     loaded_config = json.load(f)
-                    # Merge with defaults
                     for key in default_config:
                         if key not in loaded_config:
                             loaded_config[key] = default_config[key]
@@ -62,9 +58,9 @@ class ConfigManager:
         return default_config
     
     def save_config(self):
-        """Save configuration to file"""
         try:
-            with open(self.config_file, 'w') as f:
+            config_path = self.get_config_path()
+            with open(config_path, 'w') as f:
                 json.dump(self.config, f, indent=2)
             return True
         except Exception as e:
@@ -72,66 +68,37 @@ class ConfigManager:
             return False
     
     def set_last_folder(self, folder_path):
-        """Set last folder path"""
         self.config["last_folder"] = folder_path
         self.save_config()
     
     def get_last_folder(self):
-        """Get last folder path"""
         return self.config.get("last_folder", "")
     
     def set_volume(self, volume):
-        """Set volume"""
         self.config["volume"] = volume
         self.save_config()
     
     def get_volume(self):
-        """Get volume"""
         return self.config.get("volume", 70)
     
     def set_loop(self, loop_enabled):
-        """Set loop mode"""
         self.config["loop"] = loop_enabled
         self.save_config()
     
     def get_loop(self):
-        """Get loop mode"""
         return self.config.get("loop", False)
     
-    def set_window_position(self, x, y):
-        """Set window position"""
-        self.config["window_position"] = {"x": x, "y": y}
-        self.save_config()
-    
-    def get_window_position(self):
-        """Get window position"""
-        return self.config.get("window_position")
-    
     def set_current_index(self, index):
-        """Set current song index"""
         self.config["current_index"] = index
         self.save_config()
     
     def get_current_index(self):
-        """Get current song index"""
         return self.config.get("current_index", 0)
-    
-    def set_last_songs(self, songs_list):
-        """Set last played songs"""
-        self.config["last_songs"] = songs_list
-        self.save_config()
-    
-    def get_last_songs(self):
-        """Get last played songs"""
-        return self.config.get("last_songs", [])
-
 
 class EchoVRButtonDetector:
-    """Enhanced Echo VR detection with better button press detection"""
     
-    # Multiple possible addresses to try
     BUTTON_ADDRESSES = [
-        0x20C7CA8,  # Original from cheat
+        0x20C7CA8,
         0x20C7CA0, 0x20C7CB0, 0x20C7C98, 0x20C7CB8,
         0x207CA8, 0x20C7D00, 0x20C8000
     ]
@@ -142,24 +109,19 @@ class EchoVRButtonDetector:
         self.button_address = None
         self.base_address = None
         
-        # Button tracking (from first file)
         self.last_state = 0
         self.press_start_time = 0
         self.last_click_time = 0
-        self.click_count = 0
         self.hold_detected = False
         
-        # Constants
-        self.double_tap_threshold = 0.4  # seconds for double tap
-        self.hold_threshold = 2.0  # seconds for long hold
-        self.single_click_timeout = 0.4  # Time to wait before deciding it's a single click
+        self.hold_threshold = 2.0
+        self.click_timeout = 0.8
         
-        # Thread-safe signal for single clicks
-        self.single_click_pending = False
-        self.single_click_timer = None
+        self.click_history = []
+        self.action_pending = False
+        self.action_timer = None
     
     def connect_to_echo(self):
-        """Connect to EchoVR process"""
         try:
             self.pm = pymem.Pymem("echovr.exe")
             echo_module = pymem.process.module_from_name(
@@ -167,11 +129,9 @@ class EchoVRButtonDetector:
             )
             self.base_address = echo_module.lpBaseOfDll
             
-            # Find button address
             self.button_address = self.scan_for_button_address()
             
             if self.button_address:
-                # Test read
                 test_value = self.pm.read_uchar(self.button_address)
                 self.echo_connected = test_value in [0, 1]
                 if self.echo_connected:
@@ -186,11 +146,9 @@ class EchoVRButtonDetector:
             return False
     
     def scan_for_button_address(self):
-        """Scan memory for button-like patterns"""
         if not self.pm or not self.base_address:
             return None
         
-        # Try predefined addresses first
         for offset in self.BUTTON_ADDRESSES:
             try:
                 addr = self.base_address + offset
@@ -216,7 +174,6 @@ class EchoVRButtonDetector:
         return None
     
     def read_button_state(self):
-        """Read the current button state from EchoVR memory"""
         if not self.echo_connected or self.button_address is None:
             return -1
         try:
@@ -225,85 +182,88 @@ class EchoVRButtonDetector:
         except:
             return -1
     
+    def process_clicks(self, mp3_player):
+        if not self.click_history:
+            return
+        
+        current_time = time.time()
+        
+        if len(self.click_history) >= 3:
+            first_click_time = self.click_history[0]
+            last_click_time = self.click_history[-1]
+            total_time = last_click_time - first_click_time
+            
+            click_count = len(self.click_history)
+            
+            if click_count == 3 and total_time < 0.8:
+                print("3 clicks detected - previous song")
+                if mp3_player.playing:
+                    mp3_player.previous_song()
+                else:
+                    mp3_player.previous_song()
+                    mp3_player.play()
+                self.click_history = []
+            
+            elif click_count == 4 and total_time < 1.0:
+                print("4 clicks detected - next song")
+                if mp3_player.playing:
+                    mp3_player.next_song()
+                else:
+                    mp3_player.next_song()
+                    mp3_player.play()
+                self.click_history = []
+            
+            elif click_count > 4:
+                self.click_history = []
+    
     def check_button_actions(self, mp3_player):
-        """Check for button actions using the sophisticated logic from first file"""
         current_state = self.read_button_state()
         if current_state < 0:
             return
         
         current_time = time.time()
         
-        # Button pressed (0 -> 1)
         if current_state == 1 and self.last_state == 0:
             self.press_start_time = current_time
-            
-            # Check for double tap
-            time_since_last_click = current_time - self.last_click_time
-            if time_since_last_click < self.double_tap_threshold:
-                self.click_count += 1
-                if self.click_count == 2:
-                    print("Double tap detected - next song")
-                    if mp3_player.playing:
-                        mp3_player.next_song()
-                    self.click_count = 0
-                    self.hold_detected = False
-                    self.last_state = current_state
-                    # Cancel any pending single click
-                    self.single_click_pending = False
-                    if self.single_click_timer:
-                        self.single_click_timer.cancel()
-                        self.single_click_timer = None
-                    return
-            else:
-                self.click_count = 1
-            
             self.last_click_time = current_time
             self.hold_detected = False
         
-        # Button held
         elif current_state == 1 and self.last_state == 1:
             hold_duration = current_time - self.press_start_time
             
-            # Long hold (2 seconds)
             if hold_duration >= self.hold_threshold and not self.hold_detected:
                 print("Long hold detected - toggle pause")
                 mp3_player.toggle_play()
                 self.hold_detected = True
-                self.click_count = 0
-                # Cancel any pending single click
-                self.single_click_pending = False
-                if self.single_click_timer:
-                    self.single_click_timer.cancel()
-                    self.single_click_timer = None
+                self.click_history = []
+                if self.action_timer:
+                    self.action_timer.cancel()
+                    self.action_timer = None
         
-        # Button released (1 -> 0)
         elif current_state == 0 and self.last_state == 1:
             press_duration = current_time - self.press_start_time
             
-            # Single click (only if not a hold and not part of double tap)
-            if press_duration < 0.5 and not self.hold_detected and self.click_count == 1:
-                # Set up single click detection
-                self.single_click_pending = True
+            if press_duration < 0.5 and not self.hold_detected:
+                current_time = time.time()
                 
-                # Create a timer to handle the single click
-                def handle_single_click():
-                    if self.single_click_pending and self.click_count == 1:
-                        print("Single click detected - previous song")
-                        if mp3_player.playing:
-                            mp3_player.previous_song()
-                        else:
-                            mp3_player.previous_song()
-                            mp3_player.play()
-                        self.click_count = 0
-                    self.single_click_pending = False
+                if self.click_history:
+                    time_since_last = current_time - self.click_history[-1]
+                    if time_since_last > 1.0:
+                        self.click_history = []
                 
-                # Start timer for single click
-                self.single_click_timer = threading.Timer(self.single_click_timeout, handle_single_click)
-                self.single_click_timer.daemon = True
-                self.single_click_timer.start()
+                self.click_history.append(current_time)
+                
+                if len(self.click_history) > 4:
+                    self.click_history = self.click_history[-4:]
+                
+                if self.action_timer:
+                    self.action_timer.cancel()
+                
+                self.action_timer = threading.Timer(0.5, lambda: self.process_clicks(mp3_player))
+                self.action_timer.daemon = True
+                self.action_timer.start()
         
         self.last_state = current_state
-
 
 class MP3Player:
     def __init__(self, gui=None):
@@ -321,7 +281,6 @@ class MP3Player:
         self.config = ConfigManager()
         
     def load_folder(self, folder_path):
-        """Load all MP3 files from a folder"""
         self.playlist = []
         self.song_names = []
         
@@ -344,11 +303,7 @@ class MP3Player:
             
             if files_loaded > 0:
                 self.config.set_last_folder(folder_path)
-
-                song_paths = [os.path.relpath(path, folder_path) if os.path.isabs(path) else path 
-                            for path in self.playlist]
-                self.config.set_last_songs(song_paths)
-
+                
                 saved_index = self.config.get_current_index()
                 if 0 <= saved_index < len(self.playlist):
                     self.current_index = saved_index
@@ -367,7 +322,6 @@ class MP3Player:
             return False
     
     def load_from_config(self):
-        """Load songs from last folder in config"""
         last_folder = self.config.get_last_folder()
         if last_folder and os.path.exists(last_folder):
             print(f"Auto-loading songs from last folder: {last_folder}")
@@ -375,7 +329,6 @@ class MP3Player:
         return False
     
     def play(self, index=None):
-        """Play a song by index"""
         if not self.playlist:
             return False
             
@@ -408,7 +361,6 @@ class MP3Player:
         return False
     
     def stop(self):
-        """Stop current song"""
         if self.playing:
             pygame.mixer.music.stop()
             self.playing = False
@@ -417,7 +369,6 @@ class MP3Player:
                 self.gui.update_current_song_display()
     
     def pause(self):
-        """Pause current song"""
         if self.playing and not self.paused:
             pygame.mixer.music.pause()
             self.paused = True
@@ -425,7 +376,6 @@ class MP3Player:
                 self.gui.update_current_song_display()
     
     def unpause(self):
-        """Unpause current song"""
         if self.playing and self.paused:
             pygame.mixer.music.unpause()
             self.paused = False
@@ -433,7 +383,6 @@ class MP3Player:
                 self.gui.update_current_song_display()
     
     def toggle_play(self):
-        """Toggle play/pause"""
         if self.playing:
             if self.paused:
                 self.unpause()
@@ -443,7 +392,6 @@ class MP3Player:
             self.play()
     
     def next_song(self):
-        """Play next song"""
         if not self.playlist:
             return
         self.stop()
@@ -451,7 +399,6 @@ class MP3Player:
         self.play()
     
     def previous_song(self):
-        """Play previous song"""
         if not self.playlist:
             return
         self.stop()
@@ -459,19 +406,16 @@ class MP3Player:
         self.play()
     
     def set_volume(self, volume):
-        """Set volume (0.0 to 1.0)"""
         self.volume = max(0.0, min(1.0, volume))
         if self.playing:
             pygame.mixer.music.set_volume(self.volume)
     
     def toggle_loop(self):
-        """Toggle loop mode"""
         self.loop = not self.loop
         self.config.set_loop(self.loop)
         return self.loop
     
     def check_song_end(self):
-        """Check if song ended"""
         if self.playing and not pygame.mixer.music.get_busy() and not self.paused:
             if self.loop:
                 self.play()
@@ -480,7 +424,6 @@ class MP3Player:
             return True
         return False
 
-
 class DarkRoundedGUI:
     def __init__(self):
         self.root = tk.Tk()
@@ -488,45 +431,34 @@ class DarkRoundedGUI:
         self.root.geometry("450x550")
         self.root.configure(bg='#1a1a1a')
         
-        # Config manager
         self.config = ConfigManager()
         
-        # Player instance
         self.player = MP3Player(gui=self)
         
-        # Setup GUI
         self.setup_styles()
         self.create_widgets()
         
-        # Load config settings
         self.load_config_settings()
         
-        # Center window or restore position
-        self.restore_window_position()
+        self.center_window()
         
-        # Start EchoVR connection and monitoring
         self.connect_to_echovr()
         self.start_echo_monitoring()
         self.check_song_end()
         
-        # Try to auto-load songs from last folder
         self.auto_load_songs()
         
-        # Bind window close event
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
     def setup_styles(self):
-        """Configure styles for dark theme"""
         self.style = ttk.Style()
         self.style.theme_use('clam')
         
-        # Colors
         bg_color = '#1a1a1a'
         fg_color = '#ffffff'
         accent_color = '#4a90e2'
         hover_color = '#357abd'
         
-        # Configure styles
         self.style.configure('Title.TLabel', 
                            background=bg_color, 
                            foreground=accent_color,
@@ -563,7 +495,6 @@ class DarkRoundedGUI:
                       background=[('active', '#444444')])
     
     def create_rounded_rectangle(self, canvas, x1, y1, x2, y2, radius=20, **kwargs):
-        """Draw a rounded rectangle"""
         points = [
             x1 + radius, y1,
             x2 - radius, y1,
@@ -581,7 +512,6 @@ class DarkRoundedGUI:
         return canvas.create_polygon(points, smooth=True, **kwargs)
     
     def create_widgets(self):
-        """Create all GUI widgets"""
         self.canvas = tk.Canvas(self.root, 
                                bg='#1a1a1a', 
                                highlightthickness=0,
@@ -601,13 +531,11 @@ class DarkRoundedGUI:
                                    style='Title.TLabel')
         self.title_label.place(x=225, y=30, anchor='center')
         
-        # EchoVR Status
         self.echo_status = ttk.Label(self.canvas,
                                     text="EchoVR: Disconnected",
                                     style='Status.TLabel')
         self.echo_status.place(x=225, y=60, anchor='center')
         
-        # Current Song Display
         self.current_song_label = ttk.Label(self.canvas,
                                           text="No music folder selected",
                                           style='Song.TLabel',
@@ -615,17 +543,14 @@ class DarkRoundedGUI:
                                           anchor='center')
         self.current_song_label.place(x=225, y=95, anchor='center')
         
-        # Folder status
         self.folder_status = ttk.Label(self.canvas,
                                      text="",
                                      style='Status.TLabel')
         self.folder_status.place(x=225, y=120, anchor='center')
         
-        # Song List Frame
         list_frame = tk.Frame(self.canvas, bg='#2d2d2d', bd=0)
         list_frame.place(x=25, y=140, width=400, height=180)
         
-        # Scrollbar
         list_scrollbar = Scrollbar(list_frame)
         list_scrollbar.pack(side='right', fill='y')
         
@@ -644,10 +569,10 @@ class DarkRoundedGUI:
         self.song_listbox.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         list_scrollbar.config(command=self.song_listbox.yview)
         self.song_listbox.bind('<<ListboxSelect>>', self.on_song_select)
-
+        
         control_frame = tk.Frame(self.canvas, bg='#1a1a1a')
         control_frame.place(x=25, y=330, width=400, height=60)
-
+        
         self.prev_btn = ttk.Button(control_frame,
                                  text="⏮",
                                  command=self.player.previous_song,
@@ -682,7 +607,7 @@ class DarkRoundedGUI:
                                  style='Control.TButton',
                                  width=4)
         self.loop_btn.pack(side='left', padx=5)
-
+        
         volume_frame = tk.Frame(self.canvas, bg='#1a1a1a')
         volume_frame.place(x=25, y=400, width=400, height=50)
         
@@ -717,7 +642,7 @@ class DarkRoundedGUI:
                                    style='Folder.TButton')
         self.folder_btn.place(x=225, y=460, anchor='center')
         
-        info_text = "EchoVR Mute Button: • Single Click = Previous Song • Double-tap = Next Song • Hold 2s = Pause/Play"
+        info_text = "EchoVR Mute Button: • 3 Clicks = Previous Song • 4 Clicks = Next Song • Hold 2s = Pause/Play"
         self.info_label = ttk.Label(self.canvas,
                                   text=info_text,
                                   style='Status.TLabel',
@@ -736,34 +661,19 @@ class DarkRoundedGUI:
         
         self.canvas.bind("<Button-3>", lambda e: self.close_app())
         self.title_label.bind("<Button-3>", lambda e: self.close_app())
-
-        self.root.bind('<Configure>', self.save_window_position)
     
     def start_drag(self, event):
-        """Start window dragging"""
         self.root.x = event.x
         self.root.y = event.y
     
     def drag(self, event):
-        """Drag window"""
         deltax = event.x - self.root.x
         deltay = event.y - self.root.y
         x = self.root.winfo_x() + deltax
         y = self.root.winfo_y() + deltay
         self.root.geometry(f"+{x}+{y}")
     
-    def restore_window_position(self):
-        """Restore window position from config"""
-        pos = self.config.get_window_position()
-        if pos:
-            x = pos.get('x', 100)
-            y = pos.get('y', 100)
-            self.root.geometry(f"+{x}+{y}")
-        else:
-            self.center_window()
-    
     def center_window(self):
-        """Center the window"""
         self.root.update_idletasks()
         width = self.root.winfo_width()
         height = self.root.winfo_height()
@@ -771,16 +681,7 @@ class DarkRoundedGUI:
         y = (self.root.winfo_screenheight() // 2) - (height // 2)
         self.root.geometry(f'+{x}+{y}')
     
-    def save_window_position(self, event=None):
-        """Save window position to config"""
-        if event and event.widget == self.root:
-            x = self.root.winfo_x()
-            y = self.root.winfo_y()
-            self.config.set_window_position(x, y)
-    
     def load_config_settings(self):
-        """Load settings from config"""
-        # Load volume
         volume = self.config.get_volume()
         self.volume_var.set(volume)
         self.player.set_volume(volume / 100.0)
@@ -795,7 +696,6 @@ class DarkRoundedGUI:
             self.loop_btn.config(text="🔁")
     
     def auto_load_songs(self):
-        """Automatically load songs from last folder on startup"""
         if self.player.load_from_config():
             self.refresh_song_list()
             last_folder = self.config.get_last_folder()
@@ -809,7 +709,6 @@ class DarkRoundedGUI:
                 self.update_song_list_selection(saved_index)
     
     def select_folder(self):
-        """Select folder with music files"""
         last_folder = self.config.get_last_folder()
         initial_dir = last_folder if os.path.exists(last_folder) else None
         
@@ -825,38 +724,32 @@ class DarkRoundedGUI:
             self.update_status_message(f"Loaded {len(self.player.playlist)} songs from {folder_name}")
     
     def refresh_song_list(self):
-        """Refresh the song list display"""
         self.song_listbox.delete(0, tk.END)
         for i, song_name in enumerate(self.player.song_names):
             self.song_listbox.insert(tk.END, f"{i+1:02d}. {song_name}")
     
     def update_song_list_selection(self, index):
-        """Update listbox selection"""
         self.song_listbox.selection_clear(0, tk.END)
         if 0 <= index < self.song_listbox.size():
             self.song_listbox.selection_set(index)
             self.song_listbox.see(index)
     
     def on_song_select(self, event):
-        """Handle song selection"""
         selection = self.song_listbox.curselection()
         if selection:
             self.player.play(selection[0])
     
     def update_volume(self, value):
-        """Update volume"""
         volume = int(value) / 100.0
         self.player.set_volume(volume)
         self.volume_label.config(text=f"{int(value)}%")
         self.config.set_volume(int(value))
     
     def toggle_loop(self):
-        """Toggle loop mode"""
         loop_enabled = self.player.toggle_loop()
         self.loop_btn.config(text="🔂" if loop_enabled else "🔁")
     
     def update_current_song_display(self):
-        """Update song display"""
         if self.player.playing:
             status = "⏸" if self.player.paused else "▶"
             if self.player.current_song:
@@ -876,12 +769,10 @@ class DarkRoundedGUI:
                 self.current_song_label.config(text="Select a folder to load music")
     
     def update_status_message(self, message):
-        """Update status message"""
         self.current_song_label.config(text=message)
         self.root.after(3000, lambda: self.update_current_song_display() if self.player.playlist else None)
     
     def connect_to_echovr(self):
-        """Connect to EchoVR"""
         self.echo_connected = self.player.echo_detector.connect_to_echo()
         status = "Connected" if self.echo_connected else "Disconnected"
         color = "#48bb78" if self.echo_connected else "#f56565"
@@ -890,7 +781,6 @@ class DarkRoundedGUI:
             self.root.after(5000, self.connect_to_echovr)
     
     def monitor_echo_buttons(self):
-        """Monitor EchoVR buttons using the sophisticated detection"""
         while hasattr(self, 'root'):
             if self.player.echo_detector.echo_connected:
                 self.player.echo_detector.check_button_actions(self.player)
@@ -899,47 +789,38 @@ class DarkRoundedGUI:
                 if not hasattr(self, '_reconnect_attempt') or self._reconnect_attempt < time.time():
                     self._reconnect_attempt = time.time() + 5
                     self.connect_to_echovr()
-            time.sleep(0.02)  
+            time.sleep(0.02)
     
     def start_echo_monitoring(self):
-        """Start EchoVR monitoring thread"""
         self.detection_thread = threading.Thread(target=self.monitor_echo_buttons, daemon=True)
         self.detection_thread.start()
     
     def update_ui_state(self):
-        """Update UI state"""
         if self.player.playing:
             self.play_btn.config(text="⏸" if not self.player.paused else "▶")
         else:
             self.play_btn.config(text="▶")
     
     def check_song_end(self):
-        """Check if song ended"""
         self.player.check_song_end()
         self.root.after(100, self.check_song_end)
     
     def on_closing(self):
-        """Handle window closing"""
         self.close_app()
     
     def close_app(self):
-        """Close application"""
-        # Save current state
         if hasattr(self.player, 'current_index'):
             self.config.set_current_index(self.player.current_index)
         
-        # Stop player
         self.player.stop()
         pygame.mixer.quit()
         
         self.root.destroy()
     
     def run(self):
-        """Start GUI"""
         self.root.mainloop()
 
 def main():
-    """Main function"""
     app = DarkRoundedGUI()
     app.run()
 
